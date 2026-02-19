@@ -25,6 +25,9 @@ jobs:
 
       - name: Cross compile (ARMv7l softfloat + musl + static)
         run: |
+          # 【修改1：先进入源码根目录（关键！解决CMake找不到配置文件）】
+          cd $GITHUB_WORKSPACE
+          
           export CC=/opt/arm-linux-musleabi-cross/bin/arm-linux-musleabi-gcc
           export CXX=/opt/arm-linux-musleabi-cross/bin/arm-linux-musleabi-g++
           export STRIP=/opt/arm-linux-musleabi-cross/bin/arm-linux-musleabi-strip
@@ -34,7 +37,8 @@ jobs:
           export CXXFLAGS="-march=armv7-a -mfloat-abi=soft -Os -static"
           export LDFLAGS="-static -s -lpthread -ldl"
 
-          mkdir build && cd build
+          # 【修改2：在源码根目录创建build（路径对应）】
+          mkdir -p build && cd build
           cmake \
             -DCMAKE_SYSTEM_NAME=Linux \
             -DCMAKE_SYSTEM_PROCESSOR=armv7l \
@@ -52,5 +56,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rustdesk-armv7l-musl-softfloat
-          path: build/hbbs build/hbbr
+          # 【修改3：指定build目录的绝对路径（避免找不到文件）】
+          path: $GITHUB_WORKSPACE/build/hbbs $GITHUB_WORKSPACE/build/hbbr
           retention-days: 90
