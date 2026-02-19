@@ -1,0 +1,84 @@
+name: Build RustDesk Server (ARMv7l softfloat + musl + static)
+
+# 手动触发编译（点一下就跑，不自动触发）
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # 使用Ubuntu最新版编译环境
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 拉取rustdesk-server 1.1.15源码
+      - name: Checkout rustdesk-server source
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk-server
+          ref: 1.1.15  # 固定版本，避免自动升级出问题
+          path: rustdesk-server
+
+      # 2. 安装ARMv7l musl交叉编译工具链（软浮点、小体积）
+      - name: Install ARM musl toolchain (softfloat)
+        run: |
+          sudo apt update
+          # 安装基础依赖 + musl交叉编译器（软浮点）
+          sudo apt install -y git cmake make pkg-config wget xz-utils
+          # 下载预编译的ARMv7 musl软浮点工具链（比手动编译快）
+          wget https://musl.cc/arm-linux-musleabi-cross.tgz
+          tar -xf arm-linux-musleabi-cross.tgz -C /opt/
+          # 配置工具链路径
+          export PATH=/opt/arm-linux-musleabi-cross/bin:$PATH
+
+      # 3. 交叉编译（核心步骤：软浮点+musl+静态+小体积）
+      - name: Cross compile (ARMv7l softfloat + musl + static)
+        run: |
+          # 配置编译器环境变量（musl软浮点）
+          export TOOLCHAIN=/opt/arm-linux-musleabi-cross/bin/arm-linux-musleabi
+          export CC=${TOOLCHAIN}-gcc
+          export CXX=${TOOLCHAIN}-g++
+          export AR=${TOOLCHAIN}-ar
+          export STRIP=${TOOLCHAIN}-strip
+          export RANLIB=${TOOLCHAIN}-ranlib
+
+          # 编译参数：软浮点+最小体积+静态链接+ARMv7通用兼容
+          export CFLAGS="-march=armv7-a -mfloat-abi=soft -mtune=generic-armv7-a -Os -static"
+          export CXXFLAGS="-march=armv7-a -mfloat-abi=soft -mtune=generic-armv7-a -Os -static"
+          export LDFLAGS="-static -s -lpthread -ldl"  # -s 剥离符号，进一步减小体积
+
+          # 进入源码目录，创建编译文件夹
+          cd rustdesk-server
+          mkdir -p build && cd build
+
+          # CMake配置（适配musl+ARMv7l）
+          cmake \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=armv7l \
+            -DCMAKE_C_COMPILER=${CC} \
+            -DCMAKE_CXX_COMPILER=${CXX} \
+            -DCMAKE_AR=${AR} \
+            -DCMAKE_RANLIB=${RANLIB} \
+            -DCMAKE_STRIP=${STRIP} \
+            -DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS}" \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \  # 最小体积模式
+            -DBUILD_STATIC=ON \              # 强制静态链接
+            -DUSE_MUSL=ON \                  # 强制使用musl库
+            ..
+
+          # 开始编译（自动用满CPU核心，加速）
+          make -j$(nproc)
+
+          # 最终剥离符号，减小体积（musl编译后再strip，体积更小）
+          ${STRIP} hbbs hbbr
+
+          # 验证编译结果（输出架构信息，方便排查）
+          file hbbs hbbr
+
+      # 4. 上传编译好的文件（供你下载）
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-server-armv7l-musl-softfloat
+          path: |
+            rustdesk-server/build/hbbs
+            rustdesk-server/build/hbbr
+          retention-days: 90  # 文件保留90天，足够你下载
