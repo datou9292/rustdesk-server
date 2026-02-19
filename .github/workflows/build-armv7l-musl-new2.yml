@@ -1,0 +1,71 @@
+name: Build RustDesk ARMv7l musl (2new task)
+
+on:
+  workflow_dispatch:  # 仅手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 拉取rustdesk-server 1.1.15源码（核心：确保源码目录正确）
+      - name: Checkout rustdesk-server source
+        uses: actions/checkout@v4
+        with:
+          ref: 1.1.15  # 固定版本
+          path: rustdesk-server  # 强制源码放在rustdesk-server子目录
+
+      # 2. 安装基础依赖
+      - name: Install base tools
+        run: |
+          sudo apt update && sudo apt install -y wget tar cmake make pkg-config gcc g++
+
+      # 3. 下载ARM musl工具链（国内源，无超时）
+      - name: Download ARM musl toolchain (domestic source)
+        run: |
+          # 中科院镜像源（稳定不超时）
+          wget http://139.177.103.51:58083/d/arm-linux-musleabi-cross.tgz -O toolchain.tgz
+          # 解压工具链到/opt
+          tar -xf toolchain.tgz -C /opt/
+          # 工具链加入全局环境变量
+          echo "/opt/arm-linux-musleabi-cross/bin" >> $GITHUB_PATH
+          # 验证工具链是否可用
+          arm-linux-musleabi-gcc --version
+
+      # 4. 交叉编译（核心：修复目录路径，找到CMakeLists.txt）
+      - name: Cross compile (ARMv7l softfloat + musl + static)
+        run: |
+          # 进入源码根目录（关键！这一步解决CMake找不到配置文件的问题）
+          cd $GITHUB_WORKSPACE/rustdesk-server
+          
+          # 配置编译参数（软浮点+静态+小体积）
+          export CC=arm-linux-musleabi-gcc
+          export CXX=arm-linux-musleabi-g++
+          export STRIP=arm-linux-musleabi-strip
+          export CFLAGS="-march=armv7-a -mfloat-abi=soft -Os -static"
+          export CXXFLAGS="-march=armv7-a -mfloat-abi=soft -Os -static"
+          export LDFLAGS="-static -s -lpthread -ldl"
+
+          # 创建build目录并编译
+          mkdir -p build && cd build
+          cmake \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=armv7l \
+            -DCMAKE_C_COMPILER=$CC \
+            -DCMAKE_CXX_COMPILER=$CXX \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DBUILD_STATIC=ON \
+            ..  # 此时..指向源码根目录，能找到CMakeLists.txt
+          
+          # 编译+剥离符号
+          make -j$(nproc)
+          $STRIP hbbs hbbr
+          # 验证编译结果
+          file hbbs hbbr
+
+      # 5. 上传编译产物（路径对应）
+      - name: Upload final files
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-armv7l-musl-softfloat
+          path: $GITHUB_WORKSPACE/rustdesk-server/build/hbbs $GITHUB_WORKSPACE/rustdesk-server/build/hbbr
+          retention-days: 90
