@@ -1,7 +1,7 @@
 name: Build RustDesk ARMv7l musl (new task)
 
 on:
-  workflow_dispatch:  # 仅手动触发
+  workflow_dispatch:
 
 jobs:
   build:
@@ -10,7 +10,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
-          ref: 1.1.15  # 固定1.1.15版本
+          ref: 1.1.15
 
       - name: Install base tools
         run: |
@@ -18,27 +18,26 @@ jobs:
 
       - name: Download ARM musl toolchain (domestic source)
         run: |
-          # 国内中科院镜像源（稳定不超时）
           wget http://139.177.103.51:58083/d/arm-linux-musleabi-cross.tgz -O toolchain.tgz
           tar -xf toolchain.tgz -C /opt/
           export PATH=/opt/arm-linux-musleabi-cross/bin:$PATH
 
       - name: Cross compile (ARMv7l softfloat + musl + static)
         run: |
-          # 【修改1：先进入源码根目录（关键！解决CMake找不到配置文件）】
-          cd $GITHUB_WORKSPACE
+          # 核心修复：进入server子目录（CMakeLists.txt在这里）
+          cd $GITHUB_WORKSPACE/server
           
           export CC=/opt/arm-linux-musleabi-cross/bin/arm-linux-musleabi-gcc
           export CXX=/opt/arm-linux-musleabi-cross/bin/arm-linux-musleabi-g++
           export STRIP=/opt/arm-linux-musleabi-cross/bin/arm-linux-musleabi-strip
           
-          # 软浮点+最小体积+静态编译参数
           export CFLAGS="-march=armv7-a -mfloat-abi=soft -Os -static"
           export CXXFLAGS="-march=armv7-a -mfloat-abi=soft -Os -static"
           export LDFLAGS="-static -s -lpthread -ldl"
 
-          # 【修改2：在源码根目录创建build（路径对应）】
+          # 在server目录下创建build
           mkdir -p build && cd build
+          # cmake指向server根目录（.. 就是server目录，能找到CMakeLists.txt）
           cmake \
             -DCMAKE_SYSTEM_NAME=Linux \
             -DCMAKE_SYSTEM_PROCESSOR=armv7l \
@@ -50,12 +49,12 @@ jobs:
           
           make -j$(nproc)
           $STRIP hbbs hbbr
-          file hbbs hbbr  # 输出架构信息，方便验证
+          file hbbs hbbr
 
       - name: Upload final files
         uses: actions/upload-artifact@v4
         with:
           name: rustdesk-armv7l-musl-softfloat
-          # 【修改3：指定build目录的绝对路径（避免找不到文件）】
-          path: $GITHUB_WORKSPACE/build/hbbs $GITHUB_WORKSPACE/build/hbbr
+          # 上传路径指向server/build
+          path: $GITHUB_WORKSPACE/server/build/hbbs $GITHUB_WORKSPACE/server/build/hbbr
           retention-days: 90
